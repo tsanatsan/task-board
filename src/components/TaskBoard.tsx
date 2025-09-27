@@ -10,16 +10,15 @@ interface StickerComponentProps {
 const StickerComponent: React.FC<StickerComponentProps> = ({ task, onSelect }) => {
   const [isDragging, setIsDragging] = useState(false)
   const [hasDragged, setHasDragged] = useState(false)
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [position, setPosition] = useState({ x: task.position_x, y: task.position_y })
   const { updateTaskPosition } = useTasksStore()
 
-  // Sync position with task updates
+  // Sync position with task updates (only when not actively dragging)
   useEffect(() => {
-    if (!isDragging) {
+    if (!isDragging && !hasDragged) {
       setPosition({ x: task.position_x, y: task.position_y })
     }
-  }, [task.position_x, task.position_y, isDragging])
+  }, [task.position_x, task.position_y, isDragging, hasDragged])
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -31,12 +30,14 @@ const StickerComponent: React.FC<StickerComponentProps> = ({ task, onSelect }) =
       y: e.clientY - rect.top
     }
     
-    setDragOffset(offset)
     setIsDragging(true)
-    setHasDragged(false) // Сбрасываем флаг перетаскивания
+    setHasDragged(false)
+    
+    let moved = false
+    let lastPosition = { ...position }
 
     const handleMouseMove = (e: MouseEvent) => {
-      setHasDragged(true) // Отмечаем, что было перетаскивание
+      moved = true
       
       const stickerWidth = 200
       const stickerHeight = 150
@@ -50,16 +51,23 @@ const StickerComponent: React.FC<StickerComponentProps> = ({ task, onSelect }) =
       newX = Math.max(0, Math.min(newX, maxX))
       newY = Math.max(0, Math.min(newY, maxY))
       
-      setPosition({ x: newX, y: newY })
+      lastPosition = { x: newX, y: newY }
+      // Обновляем позицию немедленно
+      setPosition(lastPosition)
     }
 
     const handleMouseUp = () => {
       setIsDragging(false)
-      if (hasDragged) {
-        updateTaskPosition(task.id, position)
-        // Очищаем флаг через короткое время, чтобы предотвратить клик
-        setTimeout(() => setHasDragged(false), 100)
+      
+      if (moved) {
+        setHasDragged(true)
+        // Сохраняем последнюю позицию
+        updateTaskPosition(task.id, lastPosition)
+        
+        // Сбрасываем флаг через время
+        setTimeout(() => setHasDragged(false), 150)
       }
+      
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
