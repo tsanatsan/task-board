@@ -1,0 +1,27 @@
+@import url('https://fonts.googleapis.com/css2?family=Kalam:wght@300;400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    @apply h-full;
+  }
+  
+  #root {
+    @apply h-full;
+  }
+}
+
+@layer components {
+  .font-handwriting {
+    font-family: 'Kalam', cursive;
+  }
+  
+  .control-panel {
+    @apply fixed bottom-0 left-0 right-0 mx-auto w-fit z-20;
+    @apply bg-white/80 backdrop-blur-lg rounded-t-2xl shadow-2xl;
+    @apply px-6 py-3 border border-gray-200/50 border-b-0;
+  }
+}
