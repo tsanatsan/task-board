@@ -72,14 +72,15 @@ export const ControlPanel: React.FC = () => {
           onMouseLeave={handlePanelMouseLeave}
         >
           <div className="flex items-center space-x-3 relative">
-            {/* User info */}
-            <div className="flex items-center space-x-2 mr-4">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+            {/* User avatar only */}
+            <div className="flex items-center mr-4">
+              <motion.div 
+                className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-lg font-bold shadow-lg border-2 border-white/20"
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.95 }}
+              >
                 {user?.email?.charAt(0).toUpperCase()}
-              </div>
-              <span className="text-sm text-gray-700 hidden md:block">
-                {user?.email}
-              </span>
+              </motion.div>
             </div>
 
             {/* Control buttons */}
