@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUIStore } from '../stores/ui'
 import { useTasksStore } from '../stores/tasks'
@@ -10,6 +10,8 @@ export const ControlPanel: React.FC = () => {
   const { createTask } = useTasksStore()
   const { signOut, user } = useAuthStore()
   const [showPriorityMenu, setShowPriorityMenu] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement>(null)
 
   const handleCreateTask = async (priority: Priority = 'medium') => {
     // Create task at a random position
@@ -50,14 +52,26 @@ export const ControlPanel: React.FC = () => {
       label: 'Profile',
       onClick: () => {},
       color: 'bg-purple-500 hover:bg-purple-600'
-    },
-    {
-      icon: '🚪',
-      label: 'Sign Out',
-      onClick: signOut,
-      color: 'bg-red-500 hover:bg-red-600'
     }
   ]
+
+  // Handle clicks outside user menu to close it
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [])
+
+  const handleUserClick = () => {
+    setShowUserMenu(!showUserMenu)
+  }
 
   return (
     <AnimatePresence>
@@ -72,15 +86,46 @@ export const ControlPanel: React.FC = () => {
           onMouseLeave={handlePanelMouseLeave}
         >
           <div className="flex items-center space-x-3 relative">
-            {/* User avatar only */}
-            <div className="flex items-center mr-4">
+            {/* User avatar with dropdown */}
+            <div className="flex items-center mr-4 relative" ref={userMenuRef}>
               <motion.div 
-                className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-lg font-bold shadow-lg border-2 border-white/20"
+                className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-lg font-bold shadow-lg border-2 border-white/20 cursor-pointer"
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
+                onClick={handleUserClick}
               >
                 {user?.email?.charAt(0).toUpperCase()}
               </motion.div>
+
+              {/* User dropdown menu */}
+              <AnimatePresence>
+                {showUserMenu && (
+                  <motion.div
+                    className="absolute bottom-14 left-0 bg-white rounded-lg shadow-xl border border-gray-200 py-2 min-w-40 z-50"
+                    initial={{ scale: 0, y: 10, opacity: 0 }}
+                    animate={{ scale: 1, y: 0, opacity: 1 }}
+                    exit={{ scale: 0, y: 10, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  >
+                    <div className="px-3 py-2 border-b border-gray-100">
+                      <div className="text-sm font-medium text-gray-900 truncate">
+                        {user?.email}
+                      </div>
+                    </div>
+                    
+                    <button
+                      onClick={() => {
+                        setShowUserMenu(false)
+                        signOut()
+                      }}
+                      className="w-full px-3 py-2 text-left hover:bg-red-50 text-sm flex items-center space-x-2 text-red-600"
+                    >
+                      <span>🚪</span>
+                      <span>Sign Out</span>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Control buttons */}
