@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react'
 import { useTasksStore } from '../stores/tasks'
 import { Task } from '../types'
+import { ExpandedSticker } from './ExpandedSticker'
 
 interface StickerComponentProps {
   task: Task
   onSelect: (task: Task) => void
+  zIndex?: number
+  onBringToFront: (taskId: string) => void
 }
 
-const StickerComponent: React.FC<StickerComponentProps> = ({ task, onSelect }) => {
+const StickerComponent: React.FC<StickerComponentProps> = ({ task, onSelect, zIndex = 1, onBringToFront }) => {
   const [isDragging, setIsDragging] = useState(false)
   const [hasDragged, setHasDragged] = useState(false)
   const [position, setPosition] = useState({ x: task.position_x, y: task.position_y })
@@ -23,6 +26,9 @@ const StickerComponent: React.FC<StickerComponentProps> = ({ task, onSelect }) =
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    
+    // Выводим стикер на передний план при начале перетаскивания
+    onBringToFront(task.id)
     
     const rect = e.currentTarget.getBoundingClientRect()
     const offset = {
@@ -121,7 +127,7 @@ const StickerComponent: React.FC<StickerComponentProps> = ({ task, onSelect }) =
           : '0 4px 12px rgba(0,0,0,0.1)',
         transform: isDragging ? 'rotate(2deg) scale(1.02)' : 'rotate(0deg) scale(1)',
         transition: isDragging ? 'none' : 'transform 0.2s ease, box-shadow 0.2s ease',
-        zIndex: isDragging ? 1000 : 1
+        zIndex: isDragging ? 9999 : zIndex // Максимальный z-index при перетаскивании
       }}
       onMouseDown={handleMouseDown}
       onClick={handleClick}
@@ -164,14 +170,37 @@ const StickerComponent: React.FC<StickerComponentProps> = ({ task, onSelect }) =
 }
 
 export const TaskBoard: React.FC = () => {
-  const { tasks, selectTask, fetchTasks } = useTasksStore()
+  const { tasks, fetchTasks } = useTasksStore()
+  const [topZIndex, setTopZIndex] = useState(100)
+  const [stickerZIndexes, setStickerZIndexes] = useState<Record<string, number>>({})
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [selectedTaskPosition, setSelectedTaskPosition] = useState({ x: 0, y: 0 })
 
   useEffect(() => {
     fetchTasks()
   }, [fetchTasks])
 
+  // Функция для вывода стикера на передний план
+  const bringToFront = (taskId: string) => {
+    const newZIndex = topZIndex + 1
+    setTopZIndex(newZIndex)
+    setStickerZIndexes(prev => ({
+      ...prev,
+      [taskId]: newZIndex
+    }))
+  }
+
+  const handleSelectTask = (task: Task, position: { x: number; y: number }) => {
+    setSelectedTask(task)
+    setSelectedTaskPosition(position)
+  }
+
+  const handleCloseTask = () => {
+    setSelectedTask(null)
+  }
+
   const handleBoardClick = () => {
-    selectTask(null)
+    setSelectedTask(null)
   }
 
   return (
@@ -190,7 +219,9 @@ export const TaskBoard: React.FC = () => {
         <StickerComponent
           key={task.id}
           task={task}
-          onSelect={selectTask}
+          onSelect={(task) => handleSelectTask(task, { x: task.position_x, y: task.position_y })}
+          zIndex={stickerZIndexes[task.id] || 1}
+          onBringToFront={bringToFront}
         />
       ))}
       
@@ -213,6 +244,13 @@ export const TaskBoard: React.FC = () => {
           </p>
         </div>
       )}
+      
+      {/* Expanded Sticker Modal */}
+      <ExpandedSticker 
+        task={selectedTask}
+        originalPosition={selectedTaskPosition}
+        onClose={handleCloseTask}
+      />
     </div>
   )
 }
