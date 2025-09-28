@@ -126,7 +126,7 @@ const StickerComponent: React.FC<StickerComponentProps> = ({ task, onSelect, zIn
           ? '0 8px 25px rgba(0,0,0,0.15)' 
           : '0 4px 12px rgba(0,0,0,0.1)',
         transform: isDragging ? 'rotate(2deg) scale(1.02)' : 'rotate(0deg) scale(1)',
-        transition: isDragging ? 'none' : 'transform 0.2s ease, box-shadow 0.2s ease',
+        transition: isDragging ? 'none' : 'box-shadow 0.2s ease',
         zIndex: isDragging ? 9999 : zIndex // Максимальный z-index при перетаскивании
       }}
       onMouseDown={handleMouseDown}
