@@ -1,466 +1,323 @@
 #!/bin/bash
+cd "$(dirname "$0")"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🤖 АДАМ - Первый универсальный Git скрипт
-# Простой, надежный, с полной визуализацией всех процессов
-# БЕЗОПАСНАЯ ВЕРСИЯ - только ручное управление
-# ═══════════════════════════════════════════════════════════════════════════════
+LOGFILE="adam.log"
+PIDFILE=".server.pid"
+DEPENDENCY_FILE=""
+LAST_DEP_HASH_FILE=".last_dep_hash"
 
-# КРИТИЧЕСКИЕ ПРОВЕРКИ БЕЗОПАСНОСТИ
-set -e  # Остановить выполнение при любой ошибке
-set -u  # Остановить при использовании неопределенных переменных
-
-# АВТОМАТИЧЕСКИЙ ПЕРЕХОД В ПАПКУ СКРИПТА
-# Получаем директорию где находится скрипт
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "🔄 Переходим в папку скрипта: $(basename "$SCRIPT_DIR")"
-cd "$SCRIPT_DIR"
-
-# Проверяем, что мы в безопасной директории
-safe_check() {
-    local current_path="$(pwd)"
-    
-    # Запрещаем работу в системных папках
-    case "$current_path" in
-        "/"|"$HOME"|"$HOME/Desktop"|"$HOME/Documents"|"$HOME/Downloads"|"$HOME/Music"|"$HOME/Pictures"|"$HOME/Videos"|"$HOME/Movies"|"$HOME/Public"|"$HOME/Library"|"$HOME/.Trash"|"$HOME/.ssh"|"$HOME/.config"|"$HOME/Applications"|"$HOME/bin"|"$HOME/usr"|"$HOME/usr"*|"/usr"*|"/bin"*|"/sbin"*|"/etc"*|"/var"*|"/tmp"*|"/System"*|"/Library"*|"/Applications"*|"/Volumes"*)
-            echo "❌ ОШИБКА: Адам не может работать в системной или важной папке!"
-            echo "   Текущая папка: $current_path"
-            echo "   Запустите Адама только в папке конкретного проекта!"
-            exit 1
-            ;;
-    esac
-    
-    # Проверяем признаки проектной папки
-    local is_project_folder=false
-    
-    # Признаки проекта: наличие Git, package.json, README, src/, .gitignore и т.д.
-    if [ -d ".git" ] || [ -f "package.json" ] || [ -f "README.md" ] || [ -f "README.txt" ] || [ -d "src" ] || [ -f ".gitignore" ] || [ -f "Cargo.toml" ] || [ -f "pom.xml" ] || [ -f "requirements.txt" ] || [ -f "Gemfile" ] || [ -f "go.mod" ] || [ -f "composer.json" ] || [ -f "yarn.lock" ] || [ -f "package-lock.json" ]; then
-        is_project_folder=true
-    fi
-    
-    # Показываем где мы находимся
-    local project_name=$(basename "$current_path")
-    echo "📍 Папка проекта: $project_name"
-    
-    if [ "$is_project_folder" = true ]; then
-        echo "✅ Обнаружены признаки проекта - запуск безопасен"
-        return 0
-    fi
-    
-    # Если не обнаружили признаки проекта, но это подпапка в проектах
-    case "$current_path" in
-        "$HOME/Desktop/"*|"$HOME/Documents/"*|"$HOME/Projects/"*|"$HOME/Code/"*|"$HOME/Dev/"*|"$HOME/GitHub/"*|"$HOME/git/"*)
-            echo "⚠️ Возможно это папка проекта, но признаки не найдены"
-            echo "❓ Продолжить выполнение в папке '$project_name'?"
-            read -p "   Введите 'да' для подтверждения: " confirmation
-            
-            case "$confirmation" in
-                [Дд]|[Да]|да|Да|ДА|[Yy]|[Yy][Ee][Ss]|yes|Yes|YES)
-                    echo "✅ Подтверждено пользователем"
-                    return 0
-                    ;;
-                *)
-                    echo "❌ Операция отменена"
-                    exit 1
-                    ;;
-            esac
-            ;;
-        *)
-            echo "❌ ОШИБКА: Не похоже на папку проекта!"
-            echo "   Запустите Адама в папке с проектом (где есть .git, package.json, src/ и т.д.)"
-            exit 1
-            ;;
-    esac
-}
-
-# Запускаем проверку безопасности СРАЗУ
-safe_check
-
-# Цвета для красивого вывода
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-GRAY='\033[0;37m'
-NC='\033[0m' # Без цвета
+NC='\033[0m'
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ФУНКЦИИ ВИЗУАЛЬНОГО ОФОРМЛЕНИЯ
-# ═══════════════════════════════════════════════════════════════════════════════
+server_started=0
 
-# Красивый заголовок
-show_header() {
-    clear
-    echo -e "${PURPLE}╔══════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${PURPLE}║${WHITE}                            🤖 АДАМ - Git Автоматизация                      ${PURPLE}║${NC}"
-    echo -e "${PURPLE}║${GRAY}                       Первый скрипт для всех проектов                      ${PURPLE}║${NC}"
-    echo -e "${PURPLE}╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
+log() {
+  echo -e "$(date '+%Y-%m-%d %H:%M:%S') $1" | tee -a "$LOGFILE"
+}
+
+print_header() {
+  echo -e "${BLUE}==============================${NC}"
+  echo -e "${BLUE} $1 ${NC}"
+  echo -e "${BLUE}==============================${NC}"
+}
+
+calculate_hash() {
+  if [ -f "$DEPENDENCY_FILE" ]; then
+    shasum "$DEPENDENCY_FILE" | awk '{print $1}'
+  else
     echo ""
+  fi
 }
 
-# Функция прогресс-бара
-show_progress() {
-    local message="$1"
-    local duration="$2"
-    echo -e "${CYAN}⏳ $message${NC}"
-    
-    local bar_length=50
-    local sleep_time=$(echo "scale=3; $duration / $bar_length" | bc -l 2>/dev/null || echo "0.02")
-    
-    echo -n "   ["
-    for ((i=0; i<bar_length; i++)); do
-        echo -n "━"
-        sleep "$sleep_time"
-    done
-    echo -e "] ${GREEN}✅ Готово!${NC}"
-    echo ""
+check_dependencies_changed() {
+  if [ ! -f "$LAST_DEP_HASH_FILE" ]; then
+    echo "yes"
+    return
+  fi
+  current_hash=$(calculate_hash)
+  last_hash=$(cat "$LAST_DEP_HASH_FILE")
+  if [ "$current_hash" != "$last_hash" ]; then
+    echo "yes"
+  else
+    echo "no"
+  fi
 }
 
-# Пошаговая визуализация
-show_step() {
-    local step_num="$1"
-    local step_name="$2"
-    local status="$3"  # start, success, error, warning
-    
-    case $status in
-        "start")
-            echo -e "${BLUE}┌─ Шаг $step_num: $step_name${NC}"
-            echo -e "${BLUE}│${NC}  🔄 Выполняется..."
-            ;;
-        "success")
-            echo -e "${BLUE}└─${NC} ${GREEN}✅ Шаг $step_num завершен успешно!${NC}"
-            echo ""
-            ;;
-        "error")
-            echo -e "${BLUE}└─${NC} ${RED}❌ Ошибка в шаге $step_num!${NC}"
-            echo ""
-            ;;
-        "warning")
-            echo -e "${BLUE}└─${NC} ${YELLOW}⚠️ Предупреждение в шаге $step_num${NC}"
-            echo ""
-            ;;
-    esac
+update_dep_hash() {
+  if [ -f "$DEPENDENCY_FILE" ]; then
+    calculate_hash > "$LAST_DEP_HASH_FILE"
+  fi
 }
 
-# Детальная информация о процессе
-show_process_details() {
-    local title="$1"
-    local details="$2"
-    echo -e "${CYAN}📋 $title:${NC}"
-    echo -e "${GRAY}   $details${NC}"
-    echo ""
+get_port() {
+  PORT=$(sed 's/\x1b\[[0-9;]*m//g' "$LOGFILE" | grep 'Local:' | tail -1 | grep -o 'http://localhost:[0-9]*' | sed 's/http:\/\/localhost://')
+  echo "$PORT"
 }
 
-# Разделитель разделов
-show_section_separator() {
-    echo -e "${PURPLE}═══════════════════════════════════════════════════════════════════════════════${NC}"
-}
-
-# Подтверждение действия
-ask_confirmation() {
-    local question="$1"
-    local default="$2"  # y или n
-    
-    if [ "$default" = "y" ]; then
-        echo -e "${YELLOW}❓ $question [Y/n]:${NC}"
-    else
-        echo -e "${YELLOW}❓ $question [y/N]:${NC}"
+is_github_connected() {
+  if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    remote_url=$(git remote get-url origin 2>/dev/null)
+    if [[ "$remote_url" == *github.com* ]]; then
+      echo "yes"
+      return
     fi
-    
-    read -p "   👉 " answer
-    case $answer in
-        [Yy]|[Дд]|[Да]|да|Да|ДА) return 0 ;;
-        [Nn]|[Нн]|[Нет]|нет|Нет|НЕТ) return 1 ;;
-        "") 
-            if [ "$default" = "y" ]; then
-                return 0
-            else
-                return 1
-            fi
-            ;;
-        *) return 1 ;;
-    esac
+  fi
+  echo "no"
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ОСНОВНЫЕ ФУНКЦИИ GIT
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Проверка Git репозитория с усиленной безопасностью
-check_git_repository() {
-    show_step 1 "Проверка Git репозитория" "start"
-    
-    # Показываем, где мы находимся
-    local current_path="$(pwd)"
-    local project_name="$(basename "$current_path")"
-    echo -e "${CYAN}📁 Текущая папка: $project_name${NC}"
-    echo -e "${GRAY}📂 Полный путь: $current_path${NC}"
-    echo ""
-    
-    if ! git status &>/dev/null; then
-        show_step 1 "Git репозиторий не найден" "error"
-        
-        echo -e "${RED}⚠️  ВНИМАНИЕ: Инициализация Git в папке: $project_name${NC}"
-        echo -e "${YELLOW}Это создаст новый Git репозиторий в текущей папке.${NC}"
-        
-        if ask_confirmation "Создать новый Git репозиторий в папке '$project_name'?" "n"; then
-            git init
-            show_progress "Инициализация Git репозитория" 1
-            show_step 1 "Git репозиторий создан" "success"
+status() {
+  print_header "Проверка статуса окружения"
+  # Проверка подключения к GitHub
+  if [ "$(is_github_connected)" == "yes" ]; then
+    log "${GREEN}Связь с GitHub есть${NC}"
+  else
+    log "${YELLOW}GitHub не подключен${NC}"
+  fi
+  if [ -f package.json ]; then
+    DEPENDENCY_FILE="package.json"
+    log "Node.js проект обнаружен"
+    if check_dependencies_changed | grep -q "yes"; then
+      log "${YELLOW}Обнаружены изменения в package.json, обновляю зависимости...${NC}"
+      if npm install >> "$LOGFILE" 2>&1; then
+        log "${GREEN}npm зависимости успешно обновлены${NC}"
+        update_dep_hash
+      else
+        log "${RED}Ошибка при установке npm зависимостей. Подробности в $LOGFILE${NC}"
+      fi
+    else
+      log "${GREEN}Зависимости npm актуальны${NC}"
+    fi
+  elif [ -f requirements.txt ]; then
+    DEPENDENCY_FILE="requirements.txt"
+    log "Python проект обнаружен"
+    if [ ! -d venv ]; then
+      log "${YELLOW}Виртуальное окружение не найдено, создаю и устанавливаю зависимости...${NC}"
+      if python3 -m venv venv >> "$LOGFILE" 2>&1 && source venv/bin/activate && pip install -r requirements.txt >> "$LOGFILE" 2>&1 && deactivate; then
+        log "${GREEN}Виртуальное окружение создано и зависимости установлены${NC}"
+        update_dep_hash
+      else
+        log "${RED}Ошибка при создании окружения или установке зависимостей. Подробности в $LOGFILE${NC}"
+      fi
+    else
+      if check_dependencies_changed | grep -q "yes"; then
+        log "${YELLOW}Обнаружены изменения в requirements.txt, обновляю зависимости...${NC}"
+        source venv/bin/activate
+        if pip install -r requirements.txt >> "$LOGFILE" 2>&1; then
+          log "${GREEN}Зависимости Python успешно обновлены${NC}"
+          update_dep_hash
         else
-            echo -e "${RED}❌ Адам работает только в Git репозиториях${NC}"
-            echo -e "${BLUE}📝 Подсказка: Перейдите в папку с Git репозиторием${NC}"
-            exit 1
+          log "${RED}Ошибка при обновлении зависимостей pip. Подробности в $LOGFILE${NC}"
         fi
+        deactivate
+      else
+        log "${GREEN}Виртуальное окружение и зависимости актуальны${NC}"
+      fi
+    fi
+  else
+    log "${RED}Проект с неизвестной технологией или отсутствуют основные файлы конфигурации${NC}"
+  fi
+  echo
+}
+
+is_running() {
+  if [ ! -f "$PIDFILE" ]; then
+    echo "no"
+    return
+  fi
+  PID=$(cat "$PIDFILE")
+  if ps -p $PID > /dev/null 2>&1; then
+    echo "yes"
+  else
+    echo "no"
+  fi
+}
+
+start() {
+  print_header "Запуск локального сервера"
+  if [ "$(is_running)" = "yes" ]; then
+    log "${RED}Сервер уже запущен с PID $(cat $PIDFILE). Остановите его перед новым запуском.${NC}"
+    return
+  fi
+  if [ -f package.json ]; then
+    npm run dev >> "$LOGFILE" 2>&1 &
+    echo $! > "$PIDFILE"
+    sleep 2
+    if [ "$(is_running)" = "yes" ]; then
+      PORT=$(get_port)
+      log "${GREEN}Node.js сервер успешно запущен с PID $(cat $PIDFILE)${NC}"
+      if [ -n "$PORT" ]; then
+        echo -e "${GREEN}Ссылка для доступа: http://localhost:$PORT${NC}"
+      else
+        log "${YELLOW}Не удалось определить порт сервера для отображения ссылки${NC}"
+      fi
+      server_started=1
     else
-        show_step 1 "Git репозиторий найден" "success"
-        
-        # Показываем информацию о репозитории
-        local current_branch=$(git branch --show-current 2>/dev/null || echo "main")
-        local repo_info=$(git remote get-url origin 2>/dev/null || echo "Локальный репозиторий")
-        echo -e "${CYAN}🌳 Ветка: $current_branch${NC}"
-        echo -e "${CYAN}💻 Репозиторий: $repo_info${NC}"
+      log "${RED}Не удалось запустить Node.js сервер. См. $LOGFILE${NC}"
+      rm "$PIDFILE"
     fi
-}
-
-# Проверка и показ статуса файлов
-check_file_status() {
-    show_step 2 "Анализ изменений в проекте" "start"
-    
-    # Получаем информацию о проекте
-    local project_name=$(basename "$(pwd)")
-    local current_branch=$(git branch --show-current 2>/dev/null || echo "main")
-    
-    show_process_details "Информация о проекте" "Папка: $project_name | Ветка: $current_branch"
-    
-    echo -e "${CYAN}📊 Статус файлов:${NC}"
-    git status --porcelain | while IFS= read -r line; do
-        local status="${line:0:2}"
-        local file="${line:3}"
-        
-        case $status in
-            "M "|" M") echo -e "   ${YELLOW}📝 Изменен:${NC} $file" ;;
-            "A "|" A") echo -e "   ${GREEN}➕ Добавлен:${NC} $file" ;;
-            "D "|" D") echo -e "   ${RED}➖ Удален:${NC} $file" ;;
-            "??") echo -e "   ${BLUE}❓ Новый файл:${NC} $file" ;;
-            "R ") echo -e "   ${PURPLE}🔄 Переименован:${NC} $file" ;;
-            *) echo -e "   ${GRAY}📄 $status${NC} $file" ;;
-        esac
-    done
-    
-    local files_count=$(git status --porcelain | wc -l | tr -d ' ')
-    
-    if [ "$files_count" -eq 0 ]; then
-        show_step 2 "Изменений не найдено" "warning"
-        echo -e "${YELLOW}⚠️ Нет файлов для коммита${NC}"
-        echo ""
-        show_last_commits
-        return 1
+  elif [ -f requirements.txt ]; then
+    source venv/bin/activate
+    python app.py >> "$LOGFILE" 2>&1 &
+    echo $! > "$PIDFILE"
+    sleep 2
+    if [ "$(is_running)" = "yes" ]; then
+      PORT=$(get_port)
+      log "${GREEN}Python сервер успешно запущен с PID $(cat $PIDFILE)${NC}"
+      if [ -n "$PORT" ]; then
+        echo -e "${GREEN}Ссылка для доступа: http://localhost:$PORT${NC}"
+      else
+        log "${YELLOW}Не удалось определить порт сервера для отображения ссылки${NC}"
+      fi
+      server_started=1
     else
-        show_step 2 "Найдено изменений: $files_count" "success"
-        return 0
+      log "${RED}Не удалось запустить Python сервер. См. $LOGFILE${NC}"
+      rm "$PIDFILE"
     fi
+    deactivate
+  else
+    log "${RED}Неизвестная технология для запуска${NC}"
+  fi
+  echo
 }
 
-# Добавление файлов в staging с подтверждением
-add_files_to_staging() {
-    show_step 3 "Добавление файлов в staging area" "start"
-    
-    # Проверяем признаки проекта для упрощения процесса
-    local is_known_project=false
-    if [ -d ".git" ] || [ -f "package.json" ] || [ -d "src" ] || [ -f ".gitignore" ]; then
-        is_known_project=true
-    fi
-    
-    # Показываем какие файлы будут добавлены
-    if [ "$is_known_project" = true ]; then
-        echo -e "${CYAN}📦 Добавляю все изменения в проекте...${NC}"
+stop() {
+  print_header "Остановка локального сервера"
+  if [ "$(is_running)" = "no" ]; then
+    log "${YELLOW}Сервер не запущен или PID файл отсутствует${NC}"
+    rm -f "$PIDFILE"
+    return
+  fi
+  PID=$(cat "$PIDFILE")
+  log "${YELLOW}Останавливаю сервер с PID $PID...${NC}"
+  if kill $PID >> "$LOGFILE" 2>&1; then
+    log "${GREEN}Сервер успешно остановлен${NC}"
+    rm "$PIDFILE"
+    server_started=0
+  else
+    log "${RED}Ошибка при остановке сервера. См. $LOGFILE${NC}"
+  fi
+  echo
+}
+
+restart() {
+  print_header "Перезапуск локального сервера"
+  stop
+  start
+}
+
+local_commit() {
+  if [ "$(is_github_connected)" == "no" ]; then
+    echo -e "${RED}Проект не подключен к GitHub, локальный коммит невозможен${NC}"
+    return
+  fi
+  changes=$(git status -s)
+  if [ -z "$changes" ]; then
+    echo "Нет изменений для коммита"
+    return
+  fi
+  message="Обновления:\n"
+  while IFS= read -r line; do
+    status_code=$(echo "$line" | awk '{print $1}')
+    file_name=$(echo "$line" | awk '{print $2}')
+    case $status_code in
+      M) msg="Изменён $file_name" ;;
+      A) msg="Добавлен $file_name" ;;
+      D) msg="Удалён $file_name" ;;
+      *) msg="Изменение $file_name" ;;
+    esac
+    message+="$msg\n"
+  done <<< "$changes"
+  git add .
+  git commit -m "$(echo -e "$message")"
+  echo "Создан локальный коммит с сообщением об изменениях"
+}
+
+push_commit() {
+  if [ "$(is_github_connected)" == "no" ]; then
+    echo -e "${RED}Проект не подключен к GitHub, пуш невозможен${NC}"
+    return
+  fi
+  changes=$(git status -s)
+  if [ -z "$changes" ]; then
+    echo "Нет изменений для коммита и пуша"
+    return
+  fi
+  local_commit
+  git push origin main || git push origin master
+  echo "Коммит отправлен на GitHub"
+}
+
+connect_github() {
+  if [ "$(is_github_connected)" == "yes" ]; then
+    echo "Проект уже подключен к GitHub"
+    return
+  fi
+  read -p "Введите URL удалённого репозитория GitHub: " repo_url
+  git init
+  git remote add origin "$repo_url"
+  echo "Проект подключён к GitHub с репозиторием $repo_url"
+}
+
+show_menu() {
+  echo -e "${BLUE}"
+  echo "Выберите действие:"
+  echo "1) Проверить и установить зависимости"
+  echo "2) Запустить локальный сервер"
+  if [ $server_started -eq 1 ]; then
+    echo "3) Остановить сервер"
+    echo "4) Перезапустить сервер"
+    echo "5) Показать статус сервера"
+    echo "6) Создать локальный коммит с изменениями"
+    echo "7) Создать коммит и отправить на GitHub"
+    echo "8) Подключить проект к GitHub"
+    echo "0) Выйти"
+  else
+    echo "0) Выйти"
+  fi
+  echo -e "${NC}"
+  read -p "Номер команды: " choice
+  if [ $server_started -eq 1 ]; then
+    case $choice in
+      1) status ;;
+      2) start ;;
+      3) stop ;;
+      4) restart ;;
+      5) server_status ;;
+      6) local_commit ;;
+      7) push_commit ;;
+      8) connect_github ;;
+      0) echo "Выход"; exit 0 ;;
+      *) echo -e "${RED}Неверный выбор${NC}" ;;
+    esac
+  else
+    case $choice in
+      1) status ;;
+      2) start ;;
+      0) echo "Выход"; exit 0 ;;
+      *) echo -e "${RED}Неверный выбор${NC}" ;;
+    esac
+  fi
+}
+
+server_status() {
+  print_header "Статус сервера"
+  if [ "$(is_running)" = "yes" ]; then
+    PORT=$(get_port)
+    echo -e "${GREEN}Сервер запущен с PID $(cat $PIDFILE)${NC}"
+    if [ -n "$PORT" ]; then
+      echo -e "${GREEN}Доступен по адресу: http://localhost:$PORT${NC}"
     else
-        echo -e "${YELLOW}⚠️  Предупреждение: Будут добавлены ВСЕ изменения в папке!${NC}"
-        
-        if ! ask_confirmation "Продолжить добавление всех файлов?" "n"; then
-            echo -e "${YELLOW}❌ Операция отменена пользователем${NC}"
-            return 1
-        fi
+      echo -e "${YELLOW}Порт сервера не определён${NC}"
     fi
-    
-    show_progress "Добавление всех изменений" 1.5
-    
-    git add . 2>/dev/null
-    
-    if [ $? -eq 0 ]; then
-        local staged_count=$(git diff --cached --numstat | wc -l | tr -d ' ')
-        show_step 3 "Добавлено файлов в staging: $staged_count" "success"
-        
-        echo -e "${CYAN}📦 Файлы готовы к коммиту:${NC}"
-        git diff --cached --name-status | while IFS= read -r line; do
-            local status="${line:0:1}"
-            local file="${line:2}"
-            case $status in
-                "M") echo -e "   ${YELLOW}📝 $file${NC}" ;;
-                "A") echo -e "   ${GREEN}➕ $file${NC}" ;;
-                "D") echo -e "   ${RED}➖ $file${NC}" ;;
-                *) echo -e "   ${GRAY}📄 $file${NC}" ;;
-            esac
-        done
-        echo ""
-        return 0
-    else
-        show_step 3 "Ошибка добавления файлов" "error"
-        return 1
-    fi
+  else
+    echo -e "${RED}Сервер не запущен${NC}"
+  fi
+  echo
 }
 
-# Создание коммита
-create_commit() {
-    show_step 4 "Создание коммита" "start"
-    
-    echo -e "${CYAN}💬 Введите сообщение коммита:${NC}"
-    echo -e "${GRAY}   (оставьте пустым для автоматического сообщения)${NC}"
-    read -p "   👉 " commit_message
-    
-    if [ -z "$commit_message" ]; then
-        local current_date=$(date "+%d.%m.%Y %H:%M")
-        commit_message="Обновление: $current_date"
-        show_process_details "Автоматическое сообщение" "$commit_message"
-    else
-        show_process_details "Ваше сообщение" "$commit_message"
-    fi
-    
-    show_progress "Создание коммита" 2
-    
-    git commit -m "$commit_message" >/dev/null 2>&1
-    
-    if [ $? -eq 0 ]; then
-        show_step 4 "Коммит успешно создан" "success"
-        
-        # Показываем информацию о созданном коммите
-        local commit_hash=$(git rev-parse --short HEAD)
-        local commit_time=$(git log -1 --format="%cd" --date=format:"%H:%M:%S")
-        
-        echo -e "${GREEN}🎉 КОММИТ СОЗДАН УСПЕШНО!${NC}"
-        echo -e "${CYAN}📝 Хеш коммита:${NC} $commit_hash"
-        echo -e "${CYAN}⏰ Время создания:${NC} $commit_time"
-        echo -e "${CYAN}💬 Сообщение:${NC} $commit_message"
-        echo ""
-        
-        return 0
-    else
-        show_step 4 "Ошибка создания коммита" "error"
-        return 1
-    fi
-}
-
-# Статистика коммита
-show_commit_stats() {
-    show_step 5 "Анализ изменений" "start"
-    
-    show_progress "Подсчет статистики" 1
-    
-    echo -e "${CYAN}📊 Статистика коммита:${NC}"
-    git diff --stat HEAD~1 | while IFS= read -r line; do
-        echo -e "   ${GRAY}$line${NC}"
-    done
-    echo ""
-    
-    show_step 5 "Анализ завершен" "success"
-}
-
-# Проверка remote и push
-handle_remote_push() {
-    show_step 6 "Проверка удаленного репозитория" "start"
-    
-    if git remote | grep -q origin; then
-        local remote_url=$(git remote get-url origin 2>/dev/null)
-        show_process_details "Найден remote" "$remote_url"
-        show_step 6 "Remote репозиторий найден" "success"
-        
-        if ask_confirmation "Отправить изменения на сервер (git push)?" "y"; then
-            show_step 7 "Отправка на сервер" "start"
-            show_progress "Загрузка изменений на сервер" 3
-            
-            git push 2>/dev/null
-            
-            if [ $? -eq 0 ]; then
-                show_step 7 "Изменения успешно отправлены на сервер" "success"
-                echo -e "${GREEN}🚀 ВСЕ ИЗМЕНЕНИЯ СОХРАНЕНЫ И ОТПРАВЛЕНЫ!${NC}"
-            else
-                show_step 7 "Ошибка отправки на сервер" "error"
-                echo -e "${YELLOW}⚠️ Коммит создан локально, но не отправлен на сервер${NC}"
-            fi
-        else
-            echo -e "${BLUE}📝 Коммит создан только локально${NC}"
-        fi
-    else
-        show_step 6 "Remote репозиторий не настроен" "warning"
-        echo -e "${YELLOW}⚠️ Удаленный репозиторий не найден${NC}"
-        echo -e "${GRAY}   Коммит создан только локально${NC}"
-    fi
-    echo ""
-}
-
-# Показ последних коммитов
-show_last_commits() {
-    echo -e "${CYAN}📜 Последние 5 коммитов:${NC}"
-    git log --oneline --color=always -5 | while IFS= read -r line; do
-        echo -e "   ${GRAY}$line${NC}"
-    done
-    echo ""
-}
-
-# Финальное резюме
-show_final_summary() {
-    show_section_separator
-    echo -e "${GREEN}🎯 АДАМ ЗАВЕРШИЛ РАБОТУ УСПЕШНО!${NC}"
-    echo ""
-    echo -e "${CYAN}📋 Что было сделано:${NC}"
-    echo -e "   ${GREEN}✅ Проверен Git репозиторий${NC}"
-    echo -e "   ${GREEN}✅ Проанализированы изменения${NC}"
-    echo -e "   ${GREEN}✅ Файлы добавлены в staging${NC}"
-    echo -e "   ${GREEN}✅ Создан коммит${NC}"
-    echo -e "   ${GREEN}✅ Показана статистика${NC}"
-    echo -e "   ${GREEN}✅ Обработан remote push${NC}"
-    echo ""
-    
-    local project_name=$(basename "$(pwd)")
-    echo -e "${PURPLE}🤖 Адам работает надежно для проекта: ${WHITE}$project_name${NC}"
-    show_section_separator
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ГЛАВНАЯ ФУНКЦИЯ
-# ═══════════════════════════════════════════════════════════════════════════════
-
-main() {
-    # Показываем заголовок
-    show_header
-    
-    # Выполняем все шаги по порядку
-    check_git_repository
-    
-    if check_file_status; then
-        add_files_to_staging
-        if [ $? -eq 0 ]; then
-            create_commit
-            if [ $? -eq 0 ]; then
-                show_commit_stats
-                handle_remote_push
-                show_final_summary
-            fi
-        fi
-    fi
-    
-    # Пауза перед завершением
-    echo ""
-    echo -e "${GRAY}Нажмите Enter для завершения...${NC}"
-    read
-}
-
-# Обработка сигналов
-trap 'echo -e "\n${RED}❌ Адам прерван пользователем${NC}"; exit 1' INT TERM
-
-# Запуск скрипта
-main "$@"
+while true; do
+  show_menu
+done
