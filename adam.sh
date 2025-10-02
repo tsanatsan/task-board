@@ -5,6 +5,7 @@ LOGFILE="adam.log"
 PIDFILE=".server.pid"
 DEPENDENCY_FILE=""
 LAST_DEP_HASH_FILE=".last_dep_hash"
+MAX_LOG_SIZE=1048576  # 1 MB - максимальный размер лога перед ротацией
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -12,9 +13,24 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-server_started=0
+# Ротация логов - если лог превышает max размер, переименовываем старый и создаём новый
+rotate_log() {
+  if [ -f "$LOGFILE" ]; then
+    # Для macOS используем stat -f%z, для Linux stat -c%s
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      log_size=$(stat -f%z "$LOGFILE")
+    else
+      log_size=$(stat -c%s "$LOGFILE")
+    fi
+    if [ "$log_size" -ge "$MAX_LOG_SIZE" ]; then
+      mv "$LOGFILE" "${LOGFILE}.$(date +%Y%m%d%H%M%S).old"
+      echo "Лог $LOGFILE ротирован" >> "$LOGFILE"
+    fi
+  fi
+}
 
 log() {
+  rotate_log
   echo -e "$(date '+%Y-%m-%d %H:%M:%S') $1" | tee -a "$LOGFILE"
 }
 
@@ -70,7 +86,6 @@ is_github_connected() {
 
 status() {
   print_header "Проверка статуса окружения"
-  # Проверка подключения к GitHub
   if [ "$(is_github_connected)" == "yes" ]; then
     log "${GREEN}Связь с GitHub есть${NC}"
   else
@@ -137,7 +152,7 @@ is_running() {
 
 start() {
   print_header "Запуск локального сервера"
-  if [ "$(is_running)" = "yes" ]; then
+  if [ "$(is_running)" == "yes" ]; then
     log "${RED}Сервер уже запущен с PID $(cat $PIDFILE). Остановите его перед новым запуском.${NC}"
     return
   fi
@@ -153,7 +168,6 @@ start() {
       else
         log "${YELLOW}Не удалось определить порт сервера для отображения ссылки${NC}"
       fi
-      server_started=1
     else
       log "${RED}Не удалось запустить Node.js сервер. См. $LOGFILE${NC}"
       rm "$PIDFILE"
@@ -171,7 +185,6 @@ start() {
       else
         log "${YELLOW}Не удалось определить порт сервера для отображения ссылки${NC}"
       fi
-      server_started=1
     else
       log "${RED}Не удалось запустить Python сервер. См. $LOGFILE${NC}"
       rm "$PIDFILE"
@@ -195,7 +208,6 @@ stop() {
   if kill $PID >> "$LOGFILE" 2>&1; then
     log "${GREEN}Сервер успешно остановлен${NC}"
     rm "$PIDFILE"
-    server_started=0
   else
     log "${RED}Ошибка при остановке сервера. См. $LOGFILE${NC}"
   fi
@@ -206,6 +218,11 @@ restart() {
   print_header "Перезапуск локального сервера"
   stop
   start
+}
+
+show_logs() {
+  print_header "Просмотр логов (Ctrl + C для выхода)"
+  tail -f "$LOGFILE"
 }
 
 local_commit() {
@@ -261,47 +278,6 @@ connect_github() {
   echo "Проект подключён к GitHub с репозиторием $repo_url"
 }
 
-show_menu() {
-  echo -e "${BLUE}"
-  echo "Выберите действие:"
-  echo "1) Проверить и установить зависимости"
-  echo "2) Запустить локальный сервер"
-  if [ $server_started -eq 1 ]; then
-    echo "3) Остановить сервер"
-    echo "4) Перезапустить сервер"
-    echo "5) Показать статус сервера"
-    echo "6) Создать локальный коммит с изменениями"
-    echo "7) Создать коммит и отправить на GitHub"
-    echo "8) Подключить проект к GitHub"
-    echo "0) Выйти"
-  else
-    echo "0) Выйти"
-  fi
-  echo -e "${NC}"
-  read -p "Номер команды: " choice
-  if [ $server_started -eq 1 ]; then
-    case $choice in
-      1) status ;;
-      2) start ;;
-      3) stop ;;
-      4) restart ;;
-      5) server_status ;;
-      6) local_commit ;;
-      7) push_commit ;;
-      8) connect_github ;;
-      0) echo "Выход"; exit 0 ;;
-      *) echo -e "${RED}Неверный выбор${NC}" ;;
-    esac
-  else
-    case $choice in
-      1) status ;;
-      2) start ;;
-      0) echo "Выход"; exit 0 ;;
-      *) echo -e "${RED}Неверный выбор${NC}" ;;
-    esac
-  fi
-}
-
 server_status() {
   print_header "Статус сервера"
   if [ "$(is_running)" = "yes" ]; then
@@ -316,6 +292,86 @@ server_status() {
     echo -e "${RED}Сервер не запущен${NC}"
   fi
   echo
+}
+
+show_menu() {
+  echo -e "${BLUE}"
+  echo "Выберите действие:"
+
+  echo "Общее:"
+  echo "1) Проверить и установить зависимости"
+
+  local running=$(is_running)
+  local github_connected=$(is_github_connected)
+
+  if [ "$running" == "yes" ]; then
+    echo "Работа с сервером:"
+    echo "2) Остановить сервер"
+    echo "3) Перезапустить сервер"
+    echo "4) Показать статус сервера"
+  else
+    echo "2) Запустить локальный сервер"
+  fi
+
+  echo "Логи:"
+  echo "5) Просмотреть логи сервера"
+
+  echo "Работа с GitHub:"
+  if [ "$github_connected" == "yes" ]; then
+    echo "6) Создать локальный коммит с изменениями"
+    echo "7) Создать коммит и отправить на GitHub"
+  else
+    echo "6) Подключить проект к GitHub"
+  fi
+
+  echo "0) Выйти"
+  echo -e "${NC}"
+
+  read -p "Номер команды: " choice
+
+  case $choice in
+    0) echo "Выход"; exit 0 ;;
+    1) status ;;
+    2)
+      if [ "$running" == "yes" ]; then
+        stop
+      else
+        start
+      fi
+      ;;
+    3)
+      if [ "$running" == "yes" ]; then
+        restart
+      else
+        echo -e "${RED}Неверный выбор${NC}"
+      fi
+      ;;
+    4)
+      if [ "$running" == "yes" ]; then
+        server_status
+      else
+        echo -e "${RED}Неверный выбор${NC}"
+      fi
+      ;;
+    5) show_logs ;;
+    6)
+      if [ "$github_connected" == "yes" ]; then
+        local_commit
+      else
+        connect_github
+      fi
+      ;;
+    7)
+      if [ "$github_connected" == "yes" ]; then
+        push_commit
+      else
+        echo -e "${RED}Неверный выбор${NC}"
+      fi
+      ;;
+    *)
+      echo -e "${RED}Неверный выбор${NC}"
+      ;;
+  esac
 }
 
 while true; do
